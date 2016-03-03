@@ -29,6 +29,37 @@ def read_adminopenrc(path=None):
         ENVIRON[key] = value
     return ENVIRON
 
+def parse_list_output(output):
+    lines = output.splitlines()
+    # for line in lines:
+    #     if len(line.split()) <= 1:
+    #         continue
+    #     keys = line.split()[1::2]
+    #     lines.remove(line)
+    #     break
+    keys = filter(None, lines[1].split('|'))
+    keys = [x.lower().strip() for x in keys]
+
+    r = []
+    for line in lines[3:-1]:
+        if len(line.split()) <= 1:
+            continue
+        values = filter(None, line.split('|'))
+        values = [x.strip() for x in values]
+        record = dict(zip(keys, values))
+        r.append(record)
+    return r
+
+def parse_output(output):
+    lines = output.splitlines()[3:-1]
+    r = {}
+    for line in lines:
+        kv = filter(None, line.split('|'))
+        kv = [x.strip() for x in kv]
+        r = dict(r.items() + [tuple(kv)])
+
+    return r
+
 def main(argv):
     # print argv
     source_instance=argv[-4]
