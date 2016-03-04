@@ -86,5 +86,51 @@ def main(argv):
     source_instance_id = get(similar_instance_list, 'tenant id', source_project_id)[0]['id']
     attached_volumes_list = get(volume_list, 'attached to', source_instance_id)
 
+    volume_info_list = []
+    for volume in attached_volumes_list:
+        command = 'nova volume-show %s' % volume['id']
+        volume_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        volume_info_list.append(volume_info)
+
+    # Instance was booted from a volume
+    if get(volume_info_list, 'bootable', 'true'):
+
+        # Create snapshots of the attached volumes
+        snapshot_info_list = []
+        for volume in attached_volumes_list:
+            command = 'cinder snapshot-create --force True %s' % volume['id']
+            snapshot_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+            if snapshot_info['volume_id'] == get(volume_info_list, 'bootable', 'true')[0]['id']:
+                snapshot_info['bootable'] = True
+            else:
+                snapshot_info['bootable'] = False
+            att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
+            snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance_id)[0]['device']
+            snapshot_info_list.append(snapshot_info)
+
+        # Recreate volumes from snapshots
+        volume_from_snapshot_list = []
+        for snapshot in snapshot_info_list:
+            command = 'cinder create --snapshot-id %s' % snapshot['id']
+            volume_from_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+            volume_from_snapshot['device'] = snapshot['device']
+            volume_from_snapshot['bootable'] = snapshot['bootable']
+            volume_from_snapshot_list.append(volume_from_snapshot)
+
+        # Create transfer requests
+        transfer_request_list = []
+        for volume in volume_from_snapshot_list:
+            command = 'cinder transfer-create %s' % volume['id']
+            transfer_request = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+            transfer_request_list.append(transfer_request)
+
+        # Accept transfer requests
+        for request in transfer_request_list:
+            command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project_id, request['id'], request['auth_key'])
+            transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+
+
+
+
 if __name__ == '__main__':
     main(sys.argv)
