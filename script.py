@@ -66,12 +66,12 @@ def get(list_of_dict, key, value):
 
 def main(argv):
     # print argv
-    source_instance=argv[-4]
-    source_project=argv[-3]
-    dest_instance=argv[-2]
-    dest_project=argv[-1]
+    source_instance_name=argv[-4]
+    source_project_name=argv[-3]
+    dest_instance_name=argv[-2]
+    dest_project_name=argv[-1]
 
-    # print source_instance, source_project, dest_instance, dest_project
+    # print source_instance_name, source_project_name, dest_instance_name, dest_project_name
 
     env = dict(os.environ.copy().items() + read_adminopenrc().items())
 
@@ -79,12 +79,12 @@ def main(argv):
     instance_list = parse_list_output(Popen('nova list --all-tenants'.split(), stdout=PIPE, env=env).communicate()[0])
     volume_list = parse_list_output(Popen('nova volume-list --all-tenants'.split(), stdout=PIPE, env=env).communicate()[0])
 
-    source_project_id = get(project_list, 'name', source_project)[0]['id']
-    dest_project_id = get(project_list, 'name', dest_project)[0]['id']
+    source_project = get(project_list, 'name', source_project_name)[0]
+    dest_project = get(project_list, 'name', dest_project_name)[0]
 
-    similar_instance_list = get(instance_list, 'name', source_instance)
-    source_instance_id = get(similar_instance_list, 'tenant id', source_project_id)[0]['id']
-    attached_volumes_list = get(volume_list, 'attached to', source_instance_id)
+    similar_instance_list = get(instance_list, 'name', source_instance_name)
+    source_instance = get(similar_instance_list, 'tenant id', source_project['id'])[0]
+    attached_volumes_list = get(volume_list, 'attached to', source_instance['id'])
 
     volume_info_list = []
     for volume in attached_volumes_list:
@@ -105,7 +105,7 @@ def main(argv):
             else:
                 snapshot_info['bootable'] = False
             att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
-            snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance_id)[0]['device']
+            snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
             snapshot_info_list.append(snapshot_info)
 
         # Recreate volumes from snapshots
@@ -121,12 +121,13 @@ def main(argv):
         transfer_request_list = []
         for volume in volume_from_snapshot_list:
             command = 'cinder transfer-create %s' % volume['id']
+            # Transfer request may return '{}' which means failed.
             transfer_request = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
             transfer_request_list.append(transfer_request)
 
         # Accept transfer requests
         for request in transfer_request_list:
-            command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project_id, request['id'], request['auth_key'])
+            command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project['id'], request['id'], request['auth_key'])
             transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
 
