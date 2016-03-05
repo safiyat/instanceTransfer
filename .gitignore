@@ -1,3 +1,4 @@
 admin-openrc.sh
 venv/
 *#*
+*test*
