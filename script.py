@@ -83,7 +83,9 @@ def main(argv):
     dest_project = get(project_list, 'name', dest_project_name)[0]
 
     similar_instance_list = get(instance_list, 'name', source_instance_name)
-    source_instance = get(similar_instance_list, 'tenant id', source_project['id'])[0]
+    source_instance_id = get(similar_instance_list, 'tenant id', source_project['id'])[0]['id']
+    command = 'nova show %s' % source_instance_id
+    source_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
     attached_volumes_list = get(volume_list, 'attached to', source_instance['id'])
 
     volume_info_list = []
@@ -130,8 +132,11 @@ def main(argv):
             command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project['id'], request['id'], request['auth_key'])
             transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
+        command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'][-37:-1], dest_instance_name)
+        dest_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
-
+        for volume in get(volume_from_snapshot_list, 'bootable', False):
+            command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
 
 if __name__ == '__main__':
     main(sys.argv)
