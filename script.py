@@ -60,7 +60,7 @@ def get(list_of_dict, key, value):
 
 
 def create_volume_snapshot(volumes):
-    # Create snapshots of the attached volumes
+    """Create snapshots of the volumes."""
     if type(volumes) is not list:
         volumes = [volumes]
 
@@ -77,6 +77,52 @@ def create_volume_snapshot(volumes):
         s.append(snapshot_info)
     return s
 
+def create_volume_from_snapshot(snapshots):
+    """Create volumes from the snapshots."""
+    if type(snapshots) is not list:
+        snapshots = [snapshots]
+
+    v = []
+    for snapshot in snapshots:
+        command = 'cinder create --snapshot-id %s' % snapshot['id']
+        volume_from_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        volume_from_snapshot['device'] = snapshot['device']
+        volume_from_snapshot['bootable'] = snapshot['bootable']
+        v.append(volume_from_snapshot)
+    return v
+
+def create_volume_transfer_request(volumes):
+    """Create transfer requests"""
+    if type(volumes) is not list:
+        volumes = [volumes]
+
+    t = []
+    for volume in volume_from_snapshot_list:
+        command = 'cinder transfer-create %s' % volume['id']
+        transfer_request = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        t.append(transfer_request)
+    return t
+
+def accept_volume_transfer_request(transfer_requests, recipient_project_id):
+    """Accept transfer requests"""
+    if type(transfer_requests) is not list:
+        transfer_requests = [transfer_requests]
+
+    t = []
+    for request in transfer_requests:
+        command = 'cinder --os-project-id %s transfer-accept %s %s' % (recipient_project_id, request['id'], request['auth_key'])
+        transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        t.append(transfer_accept)
+    return t
+
+def attach_volumes(instance_id, volumes):
+    """Attach volumes to the given instance."""
+    if type(volumes) is not list:
+        volumes = [volumes]
+
+    for volume in volumes:
+        command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
+        dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
 
 def main(argv):
@@ -116,35 +162,18 @@ def main(argv):
 
         # Snapshot the attached volumes
         snapshot_info_list = create_volume_snapshot(attached_volumes_list)
-
         # Recreate volumes from snapshots
-        volume_from_snapshot_list = []
-        for snapshot in snapshot_info_list:
-            command = 'cinder create --snapshot-id %s' % snapshot['id']
-            volume_from_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-            volume_from_snapshot['device'] = snapshot['device']
-            volume_from_snapshot['bootable'] = snapshot['bootable']
-            volume_from_snapshot_list.append(volume_from_snapshot)
-
+        volume_from_snapshot_list = create_volume_from_snapshot(snapshot_info_list)
         # Create transfer requests
-        transfer_request_list = []
-        for volume in volume_from_snapshot_list:
-            command = 'cinder transfer-create %s' % volume['id']
-            # Transfer request may return '{}' which means failed.
-            transfer_request = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-            transfer_request_list.append(transfer_request)
-
+        transfer_request_list = create_volume_transfer_request(volume_from_snapshot_list)
         # Accept transfer requests
-        for request in transfer_request_list:
-            command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project['id'], request['id'], request['auth_key'])
-            transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        accept_volume_transfer_request(transfer_request_list, dest_project['id'])
 
         command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'].split[0], dest_instance_name)
         dest_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
-        for volume in get(volume_from_snapshot_list, 'bootable', False):
-            command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
-            dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        # Attach volumes to the instance
+        attach_volumes(dest_instance['id'], get(volume_from_snapshot_list, 'bootable', False))
 
     # Instance is ephemeral
     else:
@@ -155,40 +184,21 @@ def main(argv):
 
         command = 'glance image-update --visibility public %s' % source_instance_snapshot['id']
         source_instance_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-
         # Snapshot the attached volumes
         snapshot_info_list = create_volume_snapshot(attached_volumes_list)
-
         # Recreate volumes from snapshots
-        volume_from_snapshot_list = []
-        for snapshot in snapshot_info_list:
-            command = 'cinder create --snapshot-id %s' % snapshot['id']
-            volume_from_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-            volume_from_snapshot['device'] = snapshot['device']
-            volume_from_snapshot['bootable'] = snapshot['bootable']
-            volume_from_snapshot_list.append(volume_from_snapshot)
-
+        volume_from_snapshot_list = create_volume_from_snapshot(snapshot_info_list)
         # Create transfer requests
-        transfer_request_list = []
-        for volume in volume_from_snapshot_list:
-            command = 'cinder transfer-create %s' % volume['id']
-            # Transfer request may return '{}' which means failed.
-            transfer_request = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-            transfer_request_list.append(transfer_request)
-
+        transfer_request_list = create_volume_transfer_request(volume_from_snapshot_list)
         # Accept transfer requests
-        for request in transfer_request_list:
-            command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project['id'], request['id'], request['auth_key'])
-            transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-
-
+        accept_volume_transfer_request(transfer_request_list, dest_project['id'])
         # Recreate instance from snapshot
         command = 'nova --os-project-id %s boot --image %s --flavor %s %s' % ( dest_project['id'], source_instance_snapshot['id'], source_instance['flavor'].split()[0], dest_instance_name)
         dest_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
-        for volume in get(volume_from_snapshot_list, 'bootable', False):
-            command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
-            dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        # Attach volumes to the instance
+        attach_volumes(dest_instance['id'], volume_from_snapshot_list)
+
 
 if __name__ == '__main__':
     main(sys.argv)
