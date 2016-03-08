@@ -31,12 +31,6 @@ def read_adminopenrc(path=None):
 
 def parse_list_output(output):
     lines = output.splitlines()
-    # for line in lines:
-    #     if len(line.split()) <= 1:
-    #         continue
-    #     keys = line.split()[1::2]
-    #     lines.remove(line)
-    #     break
     keys = filter(None, lines[1].split('|'))
     keys = [x.lower().strip() for x in keys]
 
@@ -64,8 +58,29 @@ def get(list_of_dict, key, value):
     o = filter(lambda dictionary: dictionary[key] == value, list_of_dict)
     return o
 
+
+def create_volume_snapshot(volumes):
+    # Create snapshots of the attached volumes
+    if type(volumes) is not list:
+        volumes = [volumes]
+
+    s = []
+    for volume in volumes:
+        command = 'cinder snapshot-create --force True %s' % volume['id']
+        snapshot_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        if volume['bootable'] == 'true':
+            snapshot_info['bootable'] = True
+        else:
+            snapshot_info['bootable'] = False
+        att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
+        snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
+        s.append(snapshot_info)
+    return s
+
+
+
 def main(argv):
-    # print argv
+
     source_instance_name=argv[-4]
     source_project_name=argv[-3]
     dest_instance_name=argv[-2]
@@ -94,21 +109,13 @@ def main(argv):
         volume_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
         volume_info_list.append(volume_info)
 
-    # Instance was booted from a volume
-    if get(volume_info_list, 'bootable', 'true'):
+    attached_volumes_list = volume_info_list
 
-        # Create snapshots of the attached volumes
-        snapshot_info_list = []
-        for volume in attached_volumes_list:
-            command = 'cinder snapshot-create --force True %s' % volume['id']
-            snapshot_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-            if snapshot_info['volume_id'] == get(volume_info_list, 'bootable', 'true')[0]['id']:
-                snapshot_info['bootable'] = True
-            else:
-                snapshot_info['bootable'] = False
-            att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
-            snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
-            snapshot_info_list.append(snapshot_info)
+    # Instance was booted from a volume
+    if get(attached_volumes_list, 'bootable', 'true'):
+
+        # Snapshot the attached volumes
+        snapshot_info_list = create_volume_snapshot(attached_volumes_list)
 
         # Recreate volumes from snapshots
         volume_from_snapshot_list = []
@@ -150,14 +157,7 @@ def main(argv):
         source_instance_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
         # Snapshot the attached volumes
-        snapshot_info_list = []
-        for volume in attached_volumes_list:
-            command = 'cinder snapshot-create --force True %s' % volume['id']
-            snapshot_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-            snapshot_info['bootable'] = False
-            att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
-            snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
-            snapshot_info_list.append(snapshot_info)
+        snapshot_info_list = create_volume_snapshot(attached_volumes_list)
 
         # Recreate volumes from snapshots
         volume_from_snapshot_list = []
