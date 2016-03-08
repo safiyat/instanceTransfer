@@ -124,6 +124,27 @@ def attach_volumes(instance_id, volumes):
         command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
         dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
+def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name):
+    command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project_id, bootable_volume_id, flavor, name)
+    instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    return instance
+
+def boot_from_image(dest_project_id, bootable_image_id, flavor, name):
+    command = 'nova --os-project-id %s boot --image %s --flavor %s %s' % (dest_project_id, bootable_image_id, flavor, name)
+    instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    return instance
+
+def take_snapshot(instance_id, instance_name=None, public=False):
+    if not instance_name:
+        instance_name = instance_id
+    command = 'nova image-create --show %s temp-snap-%s' % (instance_id, instance_name)
+    snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    if public:
+        command = 'glance image-update --visibility public %s' % source_instance_snapshot['id']
+    else:
+        command = 'glance image-update --visibility private %s' % source_instance_snapshot['id']
+    snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    return snapshot
 
 def main(argv):
 
@@ -168,10 +189,8 @@ def main(argv):
         transfer_request_list = create_volume_transfer_request(volume_from_snapshot_list)
         # Accept transfer requests
         accept_volume_transfer_request(transfer_request_list, dest_project['id'])
-
-        command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'].split[0], dest_instance_name)
-        dest_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-
+        # Boot from volume
+        dest_instance = boot_from_volume(dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'].split[0], dest_instance_name)
         # Attach volumes to the instance
         attach_volumes(dest_instance['id'], get(volume_from_snapshot_list, 'bootable', False))
 
@@ -179,11 +198,7 @@ def main(argv):
     else:
 
         # Snapshot the instance
-        command = 'nova image-create --show %s temp-snap-%s' % (source_instance['id'], source_instance['name'])
-        source_instance_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-
-        command = 'glance image-update --visibility public %s' % source_instance_snapshot['id']
-        source_instance_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+        source_instance_snapshot = take_snapshot(source_instance['id'], instance_name=source_instance['name'], public=True):
         # Snapshot the attached volumes
         snapshot_info_list = create_volume_snapshot(attached_volumes_list)
         # Recreate volumes from snapshots
@@ -193,9 +208,7 @@ def main(argv):
         # Accept transfer requests
         accept_volume_transfer_request(transfer_request_list, dest_project['id'])
         # Recreate instance from snapshot
-        command = 'nova --os-project-id %s boot --image %s --flavor %s %s' % ( dest_project['id'], source_instance_snapshot['id'], source_instance['flavor'].split()[0], dest_instance_name)
-        dest_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
-
+        dest_instance = boot_from_image(dest_project['id'], source_instance_snapshot['id'], source_instance['flavor'].split()[0], dest_instance_name)
         # Attach volumes to the instance
         attach_volumes(dest_instance['id'], volume_from_snapshot_list)
 
