@@ -132,11 +132,63 @@ def main(argv):
             command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project['id'], request['id'], request['auth_key'])
             transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
-        command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'][-37:-1], dest_instance_name)
+        command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'].split[0], dest_instance_name)
         dest_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
         for volume in get(volume_from_snapshot_list, 'bootable', False):
             command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
+            dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+
+    # Instance is ephemeral
+    else:
+
+        # Snapshot the instance
+        command = 'nova image-create --show %s temp-snap-%s' % (source_instance['id'], source_instance['name'])
+        source_instance_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+
+        command = 'glance image-update --visibility public %s' % source_instance_snapshot['id']
+        source_instance_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+
+        # Snapshot the attached volumes
+        snapshot_info_list = []
+        for volume in attached_volumes_list:
+            command = 'cinder snapshot-create --force True %s' % volume['id']
+            snapshot_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+            snapshot_info['bootable'] = False
+            att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
+            snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
+            snapshot_info_list.append(snapshot_info)
+
+        # Recreate volumes from snapshots
+        volume_from_snapshot_list = []
+        for snapshot in snapshot_info_list:
+            command = 'cinder create --snapshot-id %s' % snapshot['id']
+            volume_from_snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+            volume_from_snapshot['device'] = snapshot['device']
+            volume_from_snapshot['bootable'] = snapshot['bootable']
+            volume_from_snapshot_list.append(volume_from_snapshot)
+
+        # Create transfer requests
+        transfer_request_list = []
+        for volume in volume_from_snapshot_list:
+            command = 'cinder transfer-create %s' % volume['id']
+            # Transfer request may return '{}' which means failed.
+            transfer_request = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+            transfer_request_list.append(transfer_request)
+
+        # Accept transfer requests
+        for request in transfer_request_list:
+            command = 'cinder --os-project-id %s transfer-accept %s %s' % (dest_project['id'], request['id'], request['auth_key'])
+            transfer_accept = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+
+
+        # Recreate instance from snapshot
+        command = 'nova --os-project-id %s boot --image %s --flavor %s %s' % ( dest_project['id'], source_instance_snapshot['id'], source_instance['flavor'].split()[0], dest_instance_name)
+        dest_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+
+        for volume in get(volume_from_snapshot_list, 'bootable', False):
+            command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
+            dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
 if __name__ == '__main__':
     main(sys.argv)
