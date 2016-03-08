@@ -8,6 +8,7 @@
 
 import os, sys
 import json
+import time
 from subprocess import Popen, PIPE
 
 def read_adminopenrc(path=None):
@@ -21,7 +22,6 @@ def read_adminopenrc(path=None):
         admin_openrc_path = os.path.join(os.environ['HOME'], 'admin-openrc.sh')
         if os.path.isfile(admin_openrc_path) is False:
             admin_openrc_path = os.path.join('.', 'admin-openrc.sh')
-
     admin_openrc=open(admin_openrc_path).read()
     ENVIRON={}
     for line in admin_openrc.splitlines():
@@ -33,7 +33,6 @@ def parse_list_output(output):
     lines = output.splitlines()
     keys = filter(None, lines[1].split('|'))
     keys = [x.lower().strip() for x in keys]
-
     r = []
     for line in lines[3:-1]:
         if len(line.split()) <= 1:
@@ -51,19 +50,16 @@ def parse_output(output):
         kv = filter(None, line.split('|'))
         kv = [x.strip() for x in kv]
         r = dict(r.items() + [tuple(kv)])
-
     return r
 
 def get(list_of_dict, key, value):
     o = filter(lambda dictionary: dictionary[key] == value, list_of_dict)
     return o
 
-
-def create_volume_snapshot(volumes):
+def create_volume_snapshot(volumes, wait_for_available=0):
     """Create snapshots of the volumes."""
     if type(volumes) is not list:
         volumes = [volumes]
-
     s = []
     for volume in volumes:
         command = 'cinder snapshot-create --force True %s' % volume['id']
@@ -75,13 +71,34 @@ def create_volume_snapshot(volumes):
         att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
         snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
         s.append(snapshot_info)
+    if wait_for_available > 0:
+        wait = 0
+        while wait < wait_for_available:
+            time.sleep(5)
+            wait += 5
+            again = False
+            for snapshot in s:
+                command = 'cinder snapshot-show %s' % snapshot['id']
+                status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])[0]['status']
+                if status == 'error':
+                    # clean up and take snapshot again
+                    pass
+                elif status == 'creating':
+                    again = True
+                    break
+                else:    # status == 'available'
+                    # do nothing
+                    pass
+            if again:
+                continue
+            else:
+                break
     return s
 
 def create_volume_from_snapshot(snapshots):
     """Create volumes from the snapshots."""
     if type(snapshots) is not list:
         snapshots = [snapshots]
-
     v = []
     for snapshot in snapshots:
         command = 'cinder create --snapshot-id %s' % snapshot['id']
@@ -95,7 +112,6 @@ def create_volume_transfer_request(volumes):
     """Create transfer requests"""
     if type(volumes) is not list:
         volumes = [volumes]
-
     t = []
     for volume in volume_from_snapshot_list:
         command = 'cinder transfer-create %s' % volume['id']
@@ -107,7 +123,6 @@ def accept_volume_transfer_request(transfer_requests, recipient_project_id):
     """Accept transfer requests"""
     if type(transfer_requests) is not list:
         transfer_requests = [transfer_requests]
-
     t = []
     for request in transfer_requests:
         command = 'cinder --os-project-id %s transfer-accept %s %s' % (recipient_project_id, request['id'], request['auth_key'])
@@ -119,7 +134,6 @@ def attach_volumes(instance_id, volumes):
     """Attach volumes to the given instance."""
     if type(volumes) is not list:
         volumes = [volumes]
-
     for volume in volumes:
         command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
         dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
@@ -145,6 +159,7 @@ def take_snapshot(instance_id, instance_name=None, public=False):
         command = 'glance image-update --visibility private %s' % source_instance_snapshot['id']
     snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
     return snapshot
+
 
 def main(argv):
 
