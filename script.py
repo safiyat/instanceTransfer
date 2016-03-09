@@ -56,6 +56,17 @@ def get(list_of_dict, key, value):
     o = filter(lambda dictionary: dictionary[key] == value, list_of_dict)
     return o
 
+def print_objects_created():
+    global objects_created
+    for object_dict in objects_created:
+        key = object_dict.keys()[0]
+        print '%s:' % key
+        if type(object_dict[key]) is not list:
+            object_dict[key] = list(object_dict[key])
+        for obj in object_dict[key]:
+            print '\t %s' % obj['id']
+        print
+
 def create_volume_snapshot(volumes, wait_for_available=0):
     """Create snapshots of the volumes."""
     if type(volumes) is not list:
@@ -68,9 +79,14 @@ def create_volume_snapshot(volumes, wait_for_available=0):
             snapshot_info['bootable'] = True
         else:
             snapshot_info['bootable'] = False
+        ###
         att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
         snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
+        ###
+        # snapshot_info['device'] = get(volume['attachments'], 'server_id', source_instance['id'])[0]['device']
+        ###
         s.append(snapshot_info)
+    ##########################
     if wait_for_available > 0:
         wait = 0
         while wait < wait_for_available:
@@ -82,7 +98,15 @@ def create_volume_snapshot(volumes, wait_for_available=0):
                 status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])[0]['status']
                 if status == 'error':
                     # clean up and take snapshot again
-                    pass
+                    command = 'cinder snapshot-delete %s' % snapshot['id']
+                    a = Popen(command.split(), stdout=PIPE, env=env).communicate()[0]
+                    command = 'cinder snapshot-create --force True %s' % snapshot['volume_id']
+                    snapshot_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+                    snapshot_info['bootable'] = snapshot['bootable']
+                    snapshot_info['device'] = snapshot['device']
+                    snapshot = snapshot_info
+                    again = True
+                    break
                 elif status == 'creating':
                     again = True
                     break
@@ -93,6 +117,12 @@ def create_volume_snapshot(volumes, wait_for_available=0):
                 continue
             else:
                 break
+    if again:    # Loop ended due to timeout
+        print 'Error creating volume snapshot!'
+        print 'The following entities were created in the process:'
+        print_objects_created()
+        sys.exit(0)
+    ##########################
     return s
 
 def create_volume_from_snapshot(snapshots):
@@ -163,6 +193,8 @@ def take_snapshot(instance_id, instance_name=None, public=False):
 
 def main(argv):
 
+    objects_created = []
+
     source_instance_name=argv[-4]
     source_project_name=argv[-3]
     dest_instance_name=argv[-2]
@@ -198,14 +230,18 @@ def main(argv):
 
         # Snapshot the attached volumes
         snapshot_info_list = create_volume_snapshot(attached_volumes_list)
+        objects_created.append({'volume_snapshot':snapshot_info_list})
         # Recreate volumes from snapshots
         volume_from_snapshot_list = create_volume_from_snapshot(snapshot_info_list)
+        objects_created.append({'volume':volume_from_snapshot_list})
         # Create transfer requests
         transfer_request_list = create_volume_transfer_request(volume_from_snapshot_list)
+        objects_created.append({'volume_transfer_request':transfer_request_list})
         # Accept transfer requests
         accept_volume_transfer_request(transfer_request_list, dest_project['id'])
         # Boot from volume
         dest_instance = boot_from_volume(dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'].split[0], dest_instance_name)
+        objects_created.append({'instance':dest_instance})
         # Attach volumes to the instance
         attach_volumes(dest_instance['id'], get(volume_from_snapshot_list, 'bootable', False))
 
@@ -214,16 +250,21 @@ def main(argv):
 
         # Snapshot the instance
         source_instance_snapshot = take_snapshot(source_instance['id'], instance_name=source_instance['name'], public=True):
+        objects_created.append({'instance_snapshot':source_instance_snapshot})
         # Snapshot the attached volumes
         snapshot_info_list = create_volume_snapshot(attached_volumes_list)
+        objects_created.append({'volume_snapshot':snapshot_info_list})
         # Recreate volumes from snapshots
         volume_from_snapshot_list = create_volume_from_snapshot(snapshot_info_list)
+        objects_created.append({'volume':volume_from_snapshot_list})
         # Create transfer requests
         transfer_request_list = create_volume_transfer_request(volume_from_snapshot_list)
+        objects_created.append({'transfer_request':transfer_request_list})
         # Accept transfer requests
         accept_volume_transfer_request(transfer_request_list, dest_project['id'])
         # Recreate instance from snapshot
         dest_instance = boot_from_image(dest_project['id'], source_instance_snapshot['id'], source_instance['flavor'].split()[0], dest_instance_name)
+        objects_created.append({'instance':dest_instance})
         # Attach volumes to the instance
         attach_volumes(dest_instance['id'], volume_from_snapshot_list)
 
