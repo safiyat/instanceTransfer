@@ -227,7 +227,6 @@ def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name, wait_for
                 command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project_id, bootable_volume_id, flavor, name)
                 instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
                 again = True
-                break
             elif status == 'BUILD':
                 again = True
             else:    # status == 'ACTIVE'
@@ -237,24 +236,80 @@ def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name, wait_for
             print 'Error booting instance from volume!'
             print 'The following entities were created in the process:'
             print_objects_created()
-            raise Exception()
+            sys.exit(0)
     ##########################
     return instance
 
-def boot_from_image(dest_project_id, bootable_image_id, flavor, name):
+def boot_from_image(dest_project_id, bootable_image_id, flavor, name, wait_for_available=10):
     command = 'nova --os-project-id %s boot --image %s --flavor %s %s' % (dest_project_id, bootable_image_id, flavor, name)
     instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    ##########################
+    if wait_for_available > 0:
+        wait = 0
+        again = False
+        while wait < wait_for_available:
+            time.sleep(5)
+            wait += 5
+            again = False
+            command = 'nova show %s' % instance['id']
+            status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])['status']
+            if status == 'ERROR':
+                # clean up and create instance again
+                command = 'nova delete %s' % instance['id']
+                a = Popen(command.split(), stdout=PIPE, env=env).communicate()[0]
+                command = 'nova --os-project-id %s boot --image %s --flavor %s %s' % (dest_project_id, bootable_image_id, flavor, name)
+                instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+                again = True
+            elif status == 'BUILD':
+                again = True
+            else:    # status == 'ACTIVE'
+                instance['status'] = status
+                break
+        if again:    # Loop ended due to timeout
+            print 'Error booting instance from image!'
+            print 'The following entities were created in the process:'
+            print_objects_created()
+            sys.exit(0)
+    ##########################
     return instance
 
-def take_snapshot(instance_id, instance_name=None, public=False):
+def take_snapshot(instance_id, instance_name=None, public=False, wait_for_available=20):
     if not instance_name:
         instance_name = instance_id
     command = 'nova image-create --show %s temp-snap-%s' % (instance_id, instance_name)
     snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    ##########################
+    if wait_for_available > 0:
+        wait = 0
+        again = False
+        while wait < wait_for_available:
+            time.sleep(5)
+            wait += 5
+            again = False
+            command = 'glance image-show %s' % snapshot['id']
+            status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])['status']
+            if status == 'error':
+                # clean up and create snapshot again
+                command = 'glance image-delete %s' % snapshot['id']
+                a = Popen(command.split(), stdout=PIPE, env=env).communicate()[0]
+                command = 'nova image-create --show %s temp-snap-%s' % (instance_id, instance_name)
+                snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+                again = True
+            elif status == 'queued' or status == 'saving':
+                again = True
+            else:    # status == 'active'
+                snapshot['status'] = status
+                break
+        if again:    # Loop ended due to timeout
+            print 'Error snapshotting instance!'
+            print 'The following entities were created in the process:'
+            print_objects_created()
+            sys.exit(0)
+    ##########################
     if public:
-        command = 'glance image-update --visibility public %s' % source_instance_snapshot['id']
+        command = 'glance image-update --visibility public %s' % snapshot['id']
     else:
-        command = 'glance image-update --visibility private %s' % source_instance_snapshot['id']
+        command = 'glance image-update --visibility private %s' % snapshot['id']
     snapshot = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
     return snapshot
 
@@ -294,7 +349,7 @@ def main(argv):
     if any('/dev/vda' in volume['attachments'] for volume in attached_volumes_list):
 
         # Snapshot the attached volumes
-        snapshot_info_list = create_volume_snapshot(attached_volumes_list, 10)
+        snapshot_info_list = create_volume_snapshot(attached_volumes_list)
         objects_created.append({'volume_snapshot':snapshot_info_list})
         # Recreate volumes from snapshots
         volume_from_snapshot_list = create_volume_from_snapshot(snapshot_info_list)
@@ -315,7 +370,7 @@ def main(argv):
     else:
 
         # Snapshot the instance
-        source_instance_snapshot = take_snapshot(source_instance['id'], instance_name=source_instance['name'], public=True):
+        source_instance_snapshot = take_snapshot(source_instance['id'], instance_name=source_instance['name'], public=True)
         objects_created.append({'instance_snapshot':source_instance_snapshot})
         # Snapshot the attached volumes
         snapshot_info_list = create_volume_snapshot(attached_volumes_list)
@@ -327,7 +382,7 @@ def main(argv):
         transfer_request_list = create_volume_transfer_request(volume_from_snapshot_list)
         objects_created.append({'transfer_request':transfer_request_list})
         # Accept transfer requests
-        accept_volume_transfer_request(transfer_request_list, dest_project['id'])
+        a = accept_volume_transfer_request(transfer_request_list, dest_project['id'])
         # Recreate instance from snapshot
         dest_instance = boot_from_image(dest_project['id'], source_instance_snapshot['id'], source_instance['flavor'].split()[0], dest_instance_name)
         objects_created.append({'instance':dest_instance})
