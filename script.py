@@ -261,14 +261,10 @@ def take_snapshot(instance_id, instance_name=None, public=False):
 
 def main(argv):
 
-    objects_created = []
-
     source_instance_name=argv[-4]
     source_project_name=argv[-3]
     dest_instance_name=argv[-2]
     dest_project_name=argv[-1]
-
-
 
     env = dict(os.environ.copy().items() + read_adminopenrc().items())
 
@@ -290,12 +286,12 @@ def main(argv):
         command = 'nova volume-show %s' % volume['id']
         volume_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
         volume_info_list.append(volume_info)
-
     attached_volumes_list = volume_info_list
 
+    objects_created = []
+
     # Instance was booted from a volume
-    # Bad conditional #
-    if get(attached_volumes_list, 'bootable', 'true'):
+    if any('/dev/vda' in volume['attachments'] for volume in attached_volumes_list):
 
         # Snapshot the attached volumes
         snapshot_info_list = create_volume_snapshot(attached_volumes_list, 10)
