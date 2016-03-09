@@ -67,7 +67,7 @@ def print_objects_created():
             print '\t %s' % obj['id']
         print
 
-def create_volume_snapshot(volumes, wait_for_available=0):
+def create_volume_snapshot(volumes, wait_for_available=10):
     """Create snapshots of the volumes."""
     if type(volumes) is not list:
         volumes = [volumes]
@@ -80,22 +80,23 @@ def create_volume_snapshot(volumes, wait_for_available=0):
         else:
             snapshot_info['bootable'] = False
         ###
-        att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
-        snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
+        # att = get(volume_info_list, 'id', volume['id'])[0]['attachments']
+        # snapshot_info['device'] = get(json.loads(att), 'server_id', source_instance['id'])[0]['device']
         ###
-        # snapshot_info['device'] = get(volume['attachments'], 'server_id', source_instance['id'])[0]['device']
+        snapshot_info['device'] = get(json.loads(volume['attachments']), 'server_id', source_instance['id'])[0]['device']
         ###
         s.append(snapshot_info)
     ##########################
     if wait_for_available > 0:
         wait = 0
+        again=False
         while wait < wait_for_available:
             time.sleep(5)
             wait += 5
             again = False
             for snapshot in s:
                 command = 'cinder snapshot-show %s' % snapshot['id']
-                status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])[0]['status']
+                status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])['status']
                 if status == 'error':
                     # clean up and take snapshot again
                     command = 'cinder snapshot-delete %s' % snapshot['id']
@@ -111,21 +112,21 @@ def create_volume_snapshot(volumes, wait_for_available=0):
                     again = True
                     break
                 else:    # status == 'available'
-                    # do nothing
+                    snapshot['status'] = status
                     pass
             if again:
                 continue
             else:
                 break
-    if again:    # Loop ended due to timeout
-        print 'Error creating volume snapshot!'
-        print 'The following entities were created in the process:'
-        print_objects_created()
-        sys.exit(0)
+        if again:    # Loop ended due to timeout
+            print 'Error creating volume snapshot!'
+            print 'The following entities were created in the process:'
+            print_objects_created()
+            sys.exit(0)
     ##########################
     return s
 
-def create_volume_from_snapshot(snapshots):
+def create_volume_from_snapshot(snapshots, wait_for_available=10):
     """Create volumes from the snapshots."""
     if type(snapshots) is not list:
         snapshots = [snapshots]
@@ -136,6 +137,44 @@ def create_volume_from_snapshot(snapshots):
         volume_from_snapshot['device'] = snapshot['device']
         volume_from_snapshot['bootable'] = snapshot['bootable']
         v.append(volume_from_snapshot)
+    ##########################
+    if wait_for_available > 0:
+        wait = 0
+        again=False
+        while wait < wait_for_available:
+            time.sleep(5)
+            wait += 5
+            again = False
+            for volume in v:
+                command = 'cinder show %s' % volume['id']
+                status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])['status']
+                if status == 'error':
+                    # clean up and take snapshot again
+                    command = 'cinder delete %s' % volume['id']
+                    a = Popen(command.split(), stdout=PIPE, env=env).communicate()[0]
+                    command = 'cinder create --snapshot-id %s' % volume['snapshot_id']
+                    volume_info = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+                    volume_info['bootable'] = volume['bootable']
+                    volume_info['device'] = volume['device']
+                    volume = volume_info
+                    again = True
+                    break
+                elif status == 'creating':
+                    again = True
+                    break
+                else:    # status == 'available'
+                    volume['status'] = status
+                    pass
+            if again:
+                continue
+            else:
+                break
+        if again:    # Loop ended due to timeout
+            print 'Error creating volume from snapshot!'
+            print 'The following entities were created in the process:'
+            print_objects_created()
+            sys.exit(0)
+    ##########################
     return v
 
 def create_volume_transfer_request(volumes):
@@ -168,9 +207,38 @@ def attach_volumes(instance_id, volumes):
         command = 'nova volume-attach %s %s %s' % (dest_instance['id'], volume['id'], volume['device'])
         dest_attachment = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
 
-def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name):
+def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name, wait_for_available=10):
     command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project_id, bootable_volume_id, flavor, name)
     instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    ##########################
+    if wait_for_available > 0:
+        wait = 0
+        again = False
+        while wait < wait_for_available:
+            time.sleep(5)
+            wait += 5
+            again = False
+            command = 'nova show %s' % instance['id']
+            status = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])['status']
+            if status == 'ERROR':
+                # clean up and create instance again
+                command = 'nova delete %s' % instance['id']
+                a = Popen(command.split(), stdout=PIPE, env=env).communicate()[0]
+                command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s' % (dest_project_id, bootable_volume_id, flavor, name)
+                instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+                again = True
+                break
+            elif status == 'BUILD':
+                again = True
+            else:    # status == 'ACTIVE'
+                instance['status'] = status
+                break
+        if again:    # Loop ended due to timeout
+            print 'Error booting instance from volume!'
+            print 'The following entities were created in the process:'
+            print_objects_created()
+            raise Exception()
+    ##########################
     return instance
 
 def boot_from_image(dest_project_id, bootable_image_id, flavor, name):
@@ -200,7 +268,7 @@ def main(argv):
     dest_instance_name=argv[-2]
     dest_project_name=argv[-1]
 
-    # print source_instance_name, source_project_name, dest_instance_name, dest_project_name
+
 
     env = dict(os.environ.copy().items() + read_adminopenrc().items())
 
@@ -226,10 +294,11 @@ def main(argv):
     attached_volumes_list = volume_info_list
 
     # Instance was booted from a volume
+    # Bad conditional #
     if get(attached_volumes_list, 'bootable', 'true'):
 
         # Snapshot the attached volumes
-        snapshot_info_list = create_volume_snapshot(attached_volumes_list)
+        snapshot_info_list = create_volume_snapshot(attached_volumes_list, 10)
         objects_created.append({'volume_snapshot':snapshot_info_list})
         # Recreate volumes from snapshots
         volume_from_snapshot_list = create_volume_from_snapshot(snapshot_info_list)
@@ -238,12 +307,13 @@ def main(argv):
         transfer_request_list = create_volume_transfer_request(volume_from_snapshot_list)
         objects_created.append({'volume_transfer_request':transfer_request_list})
         # Accept transfer requests
-        accept_volume_transfer_request(transfer_request_list, dest_project['id'])
+        a = accept_volume_transfer_request(transfer_request_list, dest_project['id'])
         # Boot from volume
-        dest_instance = boot_from_volume(dest_project['id'], get(volume_from_snapshot_list, 'bootable', True)[0]['id'], source_instance['flavor'].split[0], dest_instance_name)
+        dest_instance = boot_from_volume(dest_project['id'], get(volume_from_snapshot_list, 'device', '/dev/vda')[0]['id'], source_instance['flavor'].split()[0], dest_instance_name)
         objects_created.append({'instance':dest_instance})
         # Attach volumes to the instance
-        attach_volumes(dest_instance['id'], get(volume_from_snapshot_list, 'bootable', False))
+        volume_from_snapshot_list.remove(get(volume_from_snapshot_list, 'device', '/dev/vda')[0])
+        attach_volumes(dest_instance['id'], volume_from_snapshot_list)
 
     # Instance is ephemeral
     else:
