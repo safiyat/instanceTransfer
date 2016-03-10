@@ -9,6 +9,7 @@
 import os, sys
 import json
 import time
+import argparse
 from subprocess import Popen, PIPE
 
 def read_adminopenrc(path=None):
@@ -335,25 +336,61 @@ def delete_snapshot(snapshots):
 
 def main(argv):
 
-    source_instance_name=argv[-4]
-    source_project_name=argv[-3]
-    dest_instance_name=argv[-2]
-    dest_project_name=argv[-1]
+    parser = argparse.ArgumentParser(description = 'Transfer VMs on OpenStack from one project to another.')
 
-    env = dict(os.environ.copy().items() + read_adminopenrc().items())
+    parser.add_argument('-c', '--configuration-file', type=str, required=False, help='Path to the configuration file containing the OpenStack credentials.', metavar='config_file', dest='openrc')
+    parser.add_argument('--source-instance', type=str, required=True, help='Name of the instance to be transferred.', metavar='instance_name', dest='source_instance_name')
+    parser.add_argument('--source-project', type=str, required=True, help='Name of the project to which the source instance belongs.', metavar='project_name', dest='source_project_name')
+    parser.add_argument('--dest-instance', type=str, required=True, help='Name of the instance to be transferred to.', metavar='instance_name', dest='dest_instance_name')
+    parser.add_argument('--dest-project', type=str, required=True, help='Name of the project to which the destination instance will belong.', metavar='project_name', dest='dest_project_name')
+
+    args = parser.parse_args()
+
+    if args.openrc:
+        openrc = args.openrc
+    else:
+        openrc = None
+    source_instance_name=args.source_instance_name
+    source_project_name=args.source_project_name
+    dest_instance_name=args.dest_instance_name
+    dest_project_name=args.dest_project_name
+
+    if source_project_name == dest_project_name:
+        print "The source and destination projects are same!"
+        sys.exit(0)
+
+    env = dict(os.environ.copy().items() + read_adminopenrc(openrc).items())
 
     print "Gathering facts..."
-    project_list = parse_list_output(Popen('openstack project list'.split(), stdout=PIPE, env=env).communicate()[0])
-    instance_list = parse_list_output(Popen('nova list --all-tenants'.split(), stdout=PIPE, env=env).communicate()[0])
-    volume_list = parse_list_output(Popen('cinder list --all-tenants'.split(), stdout=PIPE, env=env).communicate()[0])
+    try:
+        project_list = parse_list_output(Popen('openstack project list'.split(), stdout=PIPE, stderr=PIPE, env=env).communicate()[0])
+        instance_list = parse_list_output(Popen('nova list --all-tenants'.split(), stdout=PIPE, env=env).communicate()[0])
+        volume_list = parse_list_output(Popen('cinder list --all-tenants'.split(), stdout=PIPE, env=env).communicate()[0])
+    except:
+        print "Error gathering facts! Please ensure that the user mentioned in %s file has admin privileges." % openrc
+        sys.exit(0)
 
-    source_project = get(project_list, 'name', source_project_name)[0]
-    dest_project = get(project_list, 'name', dest_project_name)[0]
+    try:
+        source_project = get(project_list, 'name', source_project_name)[0]
+    except:
+        print "Source project '%s' not found." % source_project_name
+        sys.exit(0)
 
-    similar_instance_list = get(instance_list, 'name', source_instance_name)
-    source_instance_id = get(similar_instance_list, 'tenant id', source_project['id'])[0]['id']
-    command = 'nova show %s' % source_instance_id
-    source_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    try:
+        dest_project = get(project_list, 'name', dest_project_name)[0]
+    except:
+        print "Destination project '%s' not found." % dest_project_name
+        sys.exit(0)
+
+    try:
+        similar_instance_list = get(instance_list, 'name', source_instance_name)
+        source_instance_id = get(similar_instance_list, 'tenant id', source_project['id'])[0]['id']
+        command = 'nova show %s' % source_instance_id
+        source_instance = parse_output(Popen(command.split(), stdout=PIPE, env=env).communicate()[0])
+    except:
+        print "Source instance '%s' not found in project %s." % (source_instance_name, source_project_name)
+        sys.exit(0)
+
     attached_volumes_list = get(volume_list, 'attached to', source_instance['id'])
 
     volume_info_list = []
