@@ -56,6 +56,96 @@ def print_objects_created(objects_created):
         print
 
 
+def get_project_list():
+    return parse_list_output(Popen(
+        'openstack project list'.split(), stdout=PIPE,
+        stderr=PIPE).communicate()[0])
+
+
+def get_instance_list():
+    return parse_list_output(Popen('nova list --all-tenants'.split(),
+                                   stdout=PIPE).communicate()[0])
+
+
+def get_volume_list():
+    return parse_list_output(Popen('cinder list --all-tenants'.split(),
+                                   stdout=PIPE).communicate()[0])
+
+
+def get_project(project_name, project_list):
+    uuid = re.compile('[0-9a-f]{32}')
+    try:
+        if uuid.match(project_name):
+            project = get(project_list, 'id', project_name)[0]
+        else:
+            project = get(project_list, 'name', project_name)[0]
+    except:
+        print "Project '%s' not found." % project_name
+        sys.exit(-1)
+    return project
+
+
+def get_lists():
+    try:
+        project_list = get_project_list()
+        instance_list = get_instance_list()
+        volume_list = get_volume_list()
+    except:
+        if 'OS_USERNAME' in os.environ:
+            print "Error gathering facts! Please ensure that the user" +\
+                " %s has admin privileges." % os.environ['OS_USERNAME']
+        else:
+            print "Error gathering facts! Please ensure that the openstack" +\
+                " credentials of an admin user are set as environment" + \
+                " variables."
+        sys.exit(-1)
+    return project_list, instance_list, volume_list
+
+
+def get_instance(instance_name, instance_list, project):
+    uuid = re.compile('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}' +
+                      '-[0-9a-f]{4}-[0-9a-f]{12}')
+    try:
+        if uuid.match(instance_name):
+            instance_id = instance_name
+        else:
+            similar_instance_list = get(instance_list,
+                                        'name', instance_name)
+            instance_id = get(similar_instance_list, 'tenant id',
+                              project['id'])[0]['id']
+        command = 'nova show %s' % instance_id
+        instance = parse_output(Popen(command.split(), stdout=PIPE,
+                                      stderr=PIPE).communicate()[0])
+    except:
+        print "Instance '%s' not found in project %s." % \
+            (instance_name, project['name'])
+        sys.exit(-1)
+    if not instance:
+        print "Instance '%s' not found in project %s." % \
+            (instance_name, project['name'])
+        sys.exit(-1)
+    return instance
+
+
+def booted_from_volume(volumes_list):
+    if any('/dev/vda' in volume['attachments'] for volume in
+           volumes_list):
+        return True
+    return False
+
+
+def get_volume_info(volumes):
+    if type(volumes) is not list:
+        volumes = [volumes]
+    volume_info_list = []
+    for volume in volumes:
+        command = 'cinder show %s' % volume['id']
+        volume_info = parse_output(Popen(command.split(), stdout=PIPE
+                                         ).communicate()[0])
+        volume_info_list.append(volume_info)
+    return volume_info_list
+
+
 def create_volume_snapshot(volumes, source_instance, objects_created,
                            wait_for_available=10):
     """Create snapshots of the volumes."""
@@ -393,90 +483,27 @@ def main(argv):
     dest_instance_name = args.dest_instance_name
     dest_project_name = args.dest_project_name
 
-    uuid = re.compile('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}' + \
-                      '-[0-9a-f]{4}-[0-9a-f]{12}')
-    uuid_project= re.compile('[0-9a-f]{32}')
+    print "Gathering facts..."
+    project_list, instance_list, volume_list = get_lists()
 
-    if source_project_name == dest_project_name:
+    source_project = get_project(source_project_name, project_list)
+    dest_project = get_project(dest_project_name, project_list)
+
+    if source_project['id'] == dest_project['id']:
         print "The source and destination projects are same!"
         sys.exit(-1)
 
-    print "Gathering facts..."
-    try:
-        project_list = parse_list_output(Popen(
-            'openstack project list'.split(), stdout=PIPE,
-            stderr=PIPE).communicate()[0])
-        instance_list = parse_list_output(Popen('nova list --all-tenants'.
-                                                split(), stdout=PIPE
-                                                ).communicate()[0])
-        volume_list = parse_list_output(Popen('cinder list --all-tenants'.
-                                              split(), stdout=PIPE
-                                              ).communicate()[0])
-    except:
-        if 'OS_USERNAME' in os.environ:
-            print "Error gathering facts! Please ensure that the user" +\
-                " %s has admin privileges." % os.environ['OS_USERNAME']
-        else:
-            print "Error gathering facts! Please ensure that the openstack" +\
-                " credentials of an admin user are set as environment" + \
-                " variables."
-        sys.exit(-1)
+    source_instance = get_instance(source_instance_name, instance_list,
+                                   source_project)
 
-    try:
-        if uuid_project.match(source_project_name):
-            source_project = get(project_list, 'id', source_project_name)[0]
-        else:
-            source_project = get(project_list, 'name', source_project_name)[0]
-    except:
-        print "Source project '%s' not found." % source_project_name
-        sys.exit(-1)
-
-    try:
-        if uuid_project.match(dest_project_name):
-            dest_project = get(project_list, 'id', dest_project_name)[0]
-        else:
-            dest_project = get(project_list, 'name', dest_project_name)[0]
-    except:
-        print "Destination project '%s' not found." % dest_project_name
-        sys.exit(-1)
-
-    try:
-        if uuid.match(source_instance_name):
-            source_instance_id = source_instance_name
-        else:
-            similar_instance_list = get(instance_list,
-                                    'name', source_instance_name)
-            source_instance_id = get(similar_instance_list, 'tenant id',
-                                 source_project['id'])[0]['id']
-        command = 'nova show %s' % source_instance_id
-        source_instance = parse_output(Popen(command.split(), stdout=PIPE,
-                                             stderr=PIPE).communicate()[0])
-    except:
-        print "Source instance '%s' not found in project %s." % \
-            (source_instance_name, source_project['name'])
-        sys.exit(-1)
-
-    if not source_instance:
-        print "Source instance '%s' not found in project %s." % \
-            (source_instance_name, source_project['name'])
-        sys.exit(-1)
-
-    attached_volumes_list = get(volume_list, 'attached to',
-                                source_instance['id'])
-
-    volume_info_list = []
-    for volume in attached_volumes_list:
-        command = 'cinder show %s' % volume['id']
-        volume_info = parse_output(Popen(command.split(), stdout=PIPE
-                                         ).communicate()[0])
-        volume_info_list.append(volume_info)
-    attached_volumes_list = volume_info_list
+    attached_volumes = get(volume_list, 'attached to',
+                           source_instance['id'])
+    attached_volumes_list = get_volume_info(attached_volumes)
 
     objects_created = []
 
     # Instance was booted from a volume
-    if any('/dev/vda' in volume['attachments'] for volume in
-           attached_volumes_list):
+    if booted_from_volume(attached_volumes_list):
 
         # Snapshot the attached volumes
         print "Creating volume snapshots..."
