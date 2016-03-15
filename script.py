@@ -164,9 +164,7 @@ def create_volume_snapshot(volumes, source_instance, objects_created,
             "u\"", "\"").replace(" None,", " \"None\",")
         snapshot_info['device'] = get(json.loads(att), 'server_id',
                                       source_instance['id'])[0]['device']
-        ###
         s.append(snapshot_info)
-    ##########################
     if wait_for_available > 0:
         wait = 0
         again = False
@@ -207,7 +205,6 @@ def create_volume_snapshot(volumes, source_instance, objects_created,
             print 'The following entities were created in the process:'
             print_objects_created(objects_created)
             sys.exit(-1)
-    ##########################
     return s
 
 
@@ -233,7 +230,6 @@ def create_volume_from_snapshot(snapshots, objects_created,
         volume_from_snapshot['device'] = snapshot['device']
         volume_from_snapshot['bootable'] = snapshot['bootable']
         v.append(volume_from_snapshot)
-    ##########################
     if wait_for_available > 0:
         wait = 0
         again = False
@@ -273,7 +269,6 @@ def create_volume_from_snapshot(snapshots, objects_created,
             print 'The following entities were created in the process:'
             print_objects_created(objects_created)
             sys.exit(-1)
-    ##########################
     return v
 
 
@@ -321,7 +316,6 @@ def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name,
               % (dest_project_id, bootable_volume_id, flavor, name)
     instance = parse_output(
         Popen(command.split(), stdout=PIPE).communicate()[0])
-    ##########################
     if wait_for_available > 0:
         wait = 0
         again = False
@@ -352,7 +346,6 @@ def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name,
             print 'The following entities were created in the process:'
             print_objects_created(objects_created)
             sys.exit(-1)
-    ##########################
     return instance
 
 
@@ -362,7 +355,6 @@ def boot_from_image(dest_project_id, bootable_image_id, flavor, name,
               (dest_project_id, bootable_image_id, flavor, name)
     instance = parse_output(Popen(command.split(), stdout=PIPE
                                   ).communicate()[0])
-    ##########################
     if wait_for_available > 0:
         wait = 0
         again = False
@@ -393,7 +385,6 @@ def boot_from_image(dest_project_id, bootable_image_id, flavor, name,
             print 'the following entities were created in the process:'
             print_objects_created(objects_created)
             sys.exit(-1)
-    ##########################
     return instance
 
 
@@ -405,7 +396,6 @@ def take_snapshot(instance_id, objects_created, instance_name=None,
                                                             instance_name)
     snapshot = parse_output(Popen(command.split(), stdout=PIPE
                                   ).communicate()[0])
-    ##########################
     if wait_for_available > 0:
         wait = 0
         again = False
@@ -435,7 +425,6 @@ def take_snapshot(instance_id, objects_created, instance_name=None,
             print 'the following entities were created in the process:'
             print_objects_created(objects_created)
             sys.exit(-1)
-    ##########################
     if public:
         command = 'glance image-update --visibility public %s' % snapshot['id']
     else:
