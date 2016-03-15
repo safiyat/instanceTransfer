@@ -408,7 +408,7 @@ def main(argv):
                                               split(), stdout=PIPE
                                               ).communicate()[0])
     except:
-        if os.environ.has_key('OS_USERNAME'):
+        if 'OS_USERNAME' in os.environ:
             print "Error gathering facts! Please ensure that the user" +\
                 " %s has admin privileges." % os.environ['OS_USERNAME']
         else:
