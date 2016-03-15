@@ -11,6 +11,7 @@ import sys
 import json
 import time
 import argparse
+import re
 from subprocess import Popen, PIPE
 
 
@@ -392,6 +393,10 @@ def main(argv):
     dest_instance_name = args.dest_instance_name
     dest_project_name = args.dest_project_name
 
+    uuid = re.compile('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}' + \
+                      '-[0-9a-f]{4}-[0-9a-f]{12}')
+    uuid_project= re.compile('[0-9a-f]{32}')
+
     if source_project_name == dest_project_name:
         print "The source and destination projects are same!"
         sys.exit(-1)
@@ -418,28 +423,42 @@ def main(argv):
         sys.exit(-1)
 
     try:
-        source_project = get(project_list, 'name', source_project_name)[0]
+        if uuid_project.match(source_project_name):
+            source_project = get(project_list, 'id', source_project_name)[0]
+        else:
+            source_project = get(project_list, 'name', source_project_name)[0]
     except:
         print "Source project '%s' not found." % source_project_name
         sys.exit(-1)
 
     try:
-        dest_project = get(project_list, 'name', dest_project_name)[0]
+        if uuid_project.match(dest_project_name):
+            dest_project = get(project_list, 'id', dest_project_name)[0]
+        else:
+            dest_project = get(project_list, 'name', dest_project_name)[0]
     except:
         print "Destination project '%s' not found." % dest_project_name
         sys.exit(-1)
 
     try:
-        similar_instance_list = get(instance_list,
+        if uuid.match(source_instance_name):
+            source_instance_id = source_instance_name
+        else:
+            similar_instance_list = get(instance_list,
                                     'name', source_instance_name)
-        source_instance_id = get(similar_instance_list, 'tenant id',
+            source_instance_id = get(similar_instance_list, 'tenant id',
                                  source_project['id'])[0]['id']
         command = 'nova show %s' % source_instance_id
-        source_instance = parse_output(Popen(command.split(), stdout=PIPE
-                                             ).communicate()[0])
+        source_instance = parse_output(Popen(command.split(), stdout=PIPE,
+                                             stderr=PIPE).communicate()[0])
     except:
         print "Source instance '%s' not found in project %s." % \
-            (source_instance_name, source_project_name)
+            (source_instance_name, source_project['name'])
+        sys.exit(-1)
+
+    if not source_instance:
+        print "Source instance '%s' not found in project %s." % \
+            (source_instance_name, source_project['name'])
         sys.exit(-1)
 
     attached_volumes_list = get(volume_list, 'attached to',
