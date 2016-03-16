@@ -13,6 +13,7 @@ import time
 import argparse
 import re
 from subprocess import Popen, PIPE
+from distutils.spawn import find_executable
 
 
 def parse_list_output(output):
@@ -54,6 +55,18 @@ def print_objects_created(objects_created):
         for obj in object_dict[key]:
             print '\t %s' % obj['id']
         print
+
+
+def check_environment():
+    if not find_executable('nova'):
+        return False
+    if not find_executable('openstack'):
+        return False
+    if not find_executable('glance'):
+        return False
+    if not find_executable('cinder'):
+        return False
+    return True
 
 
 def get_project_list():
@@ -471,6 +484,11 @@ def main(argv):
     source_project_name = args.source_project_name
     dest_instance_name = args.dest_instance_name
     dest_project_name = args.dest_project_name
+
+    if check_environment() is not True:
+        print "Please install all of openstack, nova, glance and cinder" + \
+            "clients before running this script."
+        sys.exit(-1)
 
     print "Gathering facts..."
     project_list, instance_list, volume_list = get_lists()
