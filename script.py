@@ -147,6 +147,12 @@ def booted_from_volume(volumes_list):
     return False
 
 
+def bootable_volume(volumes):
+    for volume in volumes:
+        if '/dev/vda' in volume['attachments']:
+            return volume
+
+
 def get_volume_info(volumes):
     if type(volumes) is not list:
         volumes = [volumes]
@@ -155,12 +161,15 @@ def get_volume_info(volumes):
         command = 'cinder show %s' % volume['id']
         volume_info = parse_output(Popen(command.split(), stdout=PIPE
                                          ).communicate()[0])
+        att = volume_info['attachments'].replace("'", "\"").replace(
+            "u\"", "\"").replace(" None,", " \"None\",")
+        volume_info['device'] = json.loads(att)[0]['device']
         volume_info_list.append(volume_info)
     return volume_info_list
 
 
 def create_volume_snapshot(volumes, source_instance, objects_created,
-                           wait_for_available=10):
+                           wait_for_available=50):
     """Create snapshots of the volumes."""
     if type(volumes) is not list:
         volumes = [volumes]
@@ -255,7 +264,7 @@ def create_volume_from_snapshot(snapshots, objects_created,
                 status = parse_output(Popen(command.split(), stdout=PIPE
                                             ).communicate()[0])['status']
                 if status == 'error':
-                    # clean up and take snapshot again
+                    # clean up and create volume again
                     command = 'cinder delete %s' % volume['id']
                     a = Popen(command.split(), stdout=PIPE).communicate()[0]
                     command = 'cinder create --snapshot-id %s' % \
@@ -401,6 +410,43 @@ def boot_from_image(dest_project_id, bootable_image_id, flavor, name,
     return instance
 
 
+def delete_instances(instances, wait_for_available=20):
+    if type(instances) is not list:
+        instances = [instances]
+    for instance in instances:
+        command = 'nova delete %s' % instance['id']
+        a = Popen(command.split(), stdout=PIPE).communicate()[0]
+    if wait_for_available > 0:
+        wait = 0
+        again = False
+        while wait < wait_for_available:
+            time.sleep(5)
+            wait += 5
+            again = False
+            for instance in instances:
+                command = 'nova show %s' % instance['id']
+                show = parse_output(Popen(command.split(), stdout=PIPE,
+                                          stderr=PIPE).communicate()[0])
+                if 'status' in show:
+                    again = True
+                    break
+            if again:
+                continue
+            else:
+                break
+        if again:    # Loop ended due to timeout
+            print 'Error deleting instance!!'
+            sys.exit(-1)
+
+
+def delete_volumes(volumes):
+    if type(volumes) is not list:
+        volumes = [volumes]
+    for volume in volumes:
+        command = 'cinder delete %s' % volume['id']
+        a = Popen(command.split(), stdout=PIPE, stderr=PIPE).communicate()[0]
+
+
 def take_snapshot(instance_id, objects_created, instance_name=None,
                   public=False, wait_for_available=120):
     if not instance_name:
@@ -477,6 +523,7 @@ def main(argv):
                         help='Name of the project to which the destination' +
                         ' instance will belong.', metavar='project_name',
                         dest='dest_project_name')
+    parser.add_argument('--move', action='store_true')
 
     args = parser.parse_args()
 
@@ -484,6 +531,10 @@ def main(argv):
     source_project_name = args.source_project_name
     dest_instance_name = args.dest_instance_name
     dest_project_name = args.dest_project_name
+    if args.move:
+        move = True
+    else:
+        move = False
 
     if check_environment() is not True:
         print "Please install all of openstack, nova, glance and cinder" + \
@@ -511,18 +562,33 @@ def main(argv):
 
     # Instance was booted from a volume
     if booted_from_volume(attached_volumes_list):
-
-        # Snapshot the attached volumes
-        print "Creating volume snapshots..."
-        snapshot_info_list = create_volume_snapshot(attached_volumes_list,
-                                                    source_instance,
-                                                    objects_created)
-        objects_created.append({'volume_snapshot': snapshot_info_list})
-        # Recreate volumes from snapshots
-        print "Creating volumes from created snapshots..."
-        volume_from_snapshot_list = create_volume_from_snapshot(
-            snapshot_info_list, objects_created)
-        objects_created.append({'volume': volume_from_snapshot_list})
+        if not move:
+            # Snapshot the attached volumes
+            print "Creating volume snapshots..."
+            snapshot_info_list = create_volume_snapshot(attached_volumes_list,
+                                                        source_instance,
+                                                        objects_created)
+            objects_created.append({'volume_snapshot': snapshot_info_list})
+            # Recreate volumes from snapshots
+            print "Creating volumes from created snapshots..."
+            volume_from_snapshot_list = create_volume_from_snapshot(
+                snapshot_info_list, objects_created)
+            objects_created.append({'volume': volume_from_snapshot_list})
+        else:
+            print "Creating root volume snapshot..."
+            root_volume = bootable_volume(attached_volumes_list)
+            snapshot_info_list = create_volume_snapshot(root_volume,
+                                                        source_instance,
+                                                        objects_created)
+            objects_created.append({'volume_snapshot': snapshot_info_list})
+            print "Deleting source instance (also freeing up attached volumes)..."
+            delete_instances(source_instance)
+            print "Creating volume from snapshot..."
+            volume_from_snapshot = create_volume_from_snapshot(
+                snapshot_info_list, objects_created)
+            objects_created.append({'volume': volume_from_snapshot})
+            attached_volumes_list.remove(root_volume)
+            volume_from_snapshot_list = attached_volumes_list + volume_from_snapshot
         # Create transfer requests
         print "Initializing transfer requests..."
         transfer_request_list = create_volume_transfer_request(
@@ -549,27 +615,34 @@ def main(argv):
         # Delete volume snapshots
         print "Cleaning up snapshots..."
         delete_volume_snapshot(snapshot_info_list)
+        if move:
+            print "Deleting root volume..."
+            delete_volumes(root_volume)
 
     # Instance is ephemeral
     else:
-
         # Snapshot the instance
         print "Creating instance snapshot..."
         source_instance_snapshot = take_snapshot(
             source_instance['id'], objects_created,
             instance_name=source_instance['name'], public=True)
         objects_created.append({'instance_snapshot': source_instance_snapshot})
-        # Snapshot the attached volumes
-        print "Creating volume snapshots..."
-        snapshot_info_list = create_volume_snapshot(attached_volumes_list,
-                                                    source_instance,
-                                                    objects_created)
-        objects_created.append({'volume_snapshot': snapshot_info_list})
-        # Recreate volumes from snapshots
-        print "Creating volumes from created snapshots..."
-        volume_from_snapshot_list = create_volume_from_snapshot(
-            snapshot_info_list, objects_created)
-        objects_created.append({'volume': volume_from_snapshot_list})
+        if not move:
+            # Snapshot the attached volumes
+            print "Creating volume snapshots..."
+            snapshot_info_list = create_volume_snapshot(attached_volumes_list,
+                                                        source_instance,
+                                                        objects_created)
+            objects_created.append({'volume_snapshot': snapshot_info_list})
+            # Recreate volumes from snapshots
+            print "Creating volumes from created snapshots..."
+            volume_from_snapshot_list = create_volume_from_snapshot(
+                snapshot_info_list, objects_created)
+            objects_created.append({'volume': volume_from_snapshot_list})
+        else:
+            print "Deleting source instance (and freeing up attached volumes)..."
+            delete_instances(source_instance)
+            volume_from_snapshot_list = attached_volumes_list
         # Create transfer requests
         print "Initializing transfer requests..."
         transfer_request_list = create_volume_transfer_request(
@@ -589,9 +662,10 @@ def main(argv):
         # Attach volumes to the instance
         print "Attaching volumes to the newly created instance..."
         attach_volumes(dest_instance['id'], volume_from_snapshot_list)
-        # Delete volume snapshots
-        print "Cleaning up volume snapshots..."
-        delete_volume_snapshot(snapshot_info_list)
+        if not move:
+            # Delete volume snapshots
+            print "Cleaning up volume snapshots..."
+            delete_volume_snapshot(snapshot_info_list)
         # Delete instance snapshot
         print "Cleaning up instance snapshots..."
         delete_snapshot(source_instance_snapshot)
