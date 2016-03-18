@@ -1,10 +1,46 @@
 #! /usr/bin/env python
 
-# Input parameters
-#     Source Instance Name
-#     Source Project Name
-#     Destination Instance Name
-#     Destination Project Name
+"""
+OpenStack Instance Transfer
+
+This script facilitates the transfer of instances between one project and
+another.
+
+The script can be thought of being analogous to the `cp` and `mv` commands in
+bashutils, albeit copying and moving instances between projects.
+
+Syntax:
+
+    sdc-transfer-instance --source-instance <source-instance-uuid> \
+      --dest-project <destination-project-name | destination-project-uuid> \
+      --dest-instance <destination-instance-name> [--move]
+
+--source-instance <source-instance-uuid>
+    The uuid of the instance to be transferred.
+    Required parameter.
+
+--dest-project <destination-project-name | destination-project-uuid>
+    The name or the uuid of the destination project in which the project is to
+    be transferred.
+    Required parameter.
+
+--dest-instance <destination-instance-name>
+    The name of the instance to be created in the destination project.
+    Required parameter.
+
+--move
+    Transfers the instance from the source project to the destination project
+    and removes the instance from the source project.
+    Equivalent to `mv` command.
+    Optional parameter.
+
+Note:
+    Please ensure that you have sourced the credentials of an admin user who is
+    in both the projects before running the script.
+
+Author: Md Safiiyat Reza <md.reza@snapdeal.com>
+"""
+
 
 import os
 import sys
@@ -12,11 +48,13 @@ import json
 import time
 import argparse
 import re
+from oslo_utils import uuidutils
 from subprocess import Popen, PIPE
 from distutils.spawn import find_executable
 
 
 def parse_list_output(output):
+    """Parse the output of list commands (like `openstack project list`)."""
     lines = output.splitlines()
     keys = filter(None, lines[1].split('|'))
     keys = [x.lower().strip() for x in keys]
@@ -32,6 +70,9 @@ def parse_list_output(output):
 
 
 def parse_output(output):
+    """
+    Parse the output of commands (like `nova boot`) that print in tabular form.
+    """
     lines = output.splitlines()[3:-1]
     r = {}
     for line in lines:
@@ -42,11 +83,19 @@ def parse_output(output):
 
 
 def get(list_of_dict, key, value):
+    """
+    Returns the dictionary in a list of dictionaries that has the value of
+    'key' as 'value'.
+    """
     o = filter(lambda dictionary: dictionary[key] == value, list_of_dict)
     return o
 
 
 def print_objects_created(objects_created):
+    """
+    Print a list of instance/volume snapshots, volumes etc that were created
+    during the execution of the script.
+    """
     for object_dict in objects_created:
         key = object_dict.keys()[0]
         print '%s:' % key
@@ -58,6 +107,10 @@ def print_objects_created(objects_created):
 
 
 def check_environment():
+    """
+    Check if the openstack clients are installed and available to call the
+    necessary commands.
+    """
     if not find_executable('nova'):
         return False
     if not find_executable('openstack'):
@@ -70,22 +123,28 @@ def check_environment():
 
 
 def get_project_list():
+    """Return list of all the projects in OpenStack."""
     return parse_list_output(Popen(
         'openstack project list'.split(), stdout=PIPE,
         stderr=PIPE).communicate()[0])
 
 
 def get_instance_list():
+    """Return list of all the instances in OpenStack."""
     return parse_list_output(Popen('nova list --all-tenants'.split(),
                                    stdout=PIPE).communicate()[0])
 
 
 def get_volume_list():
+    """Return list of all the volumes in OpenStack."""
     return parse_list_output(Popen('cinder list --all-tenants'.split(),
                                    stdout=PIPE).communicate()[0])
 
 
 def get_project(project_name, project_list):
+    """
+    Get the details of the project by its name/uuid from the project list.
+    """
     uuid = re.compile('[0-9a-f]{32}')
     try:
         if uuid.match(project_name):
@@ -99,6 +158,7 @@ def get_project(project_name, project_list):
 
 
 def get_lists():
+    """Get the list of all the projects, instances and volumes in OpenStack."""
     try:
         project_list = get_project_list()
         instance_list = get_instance_list()
@@ -116,6 +176,10 @@ def get_lists():
 
 
 def get_instance(instance_name, instance_list, project):
+    """
+    Get the details of the instance by its name/uuid and project from the
+    instance list.
+    """
     uuid = re.compile('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}' +
                       '-[0-9a-f]{4}-[0-9a-f]{12}')
     try:
@@ -141,6 +205,7 @@ def get_instance(instance_name, instance_list, project):
 
 
 def booted_from_volume(volumes_list):
+    """Check if any of the volumes in the volumes_list has been booted from."""
     if any('/dev/vda' in volume['attachments'] for volume in
            volumes_list):
         return True
@@ -148,12 +213,14 @@ def booted_from_volume(volumes_list):
 
 
 def bootable_volume(volumes):
+    """Return the volume booted from the list of volumes."""
     for volume in volumes:
         if '/dev/vda' in volume['attachments']:
             return volume
 
 
 def get_volume_info(volumes):
+    """Get the individual volume information about all the volumes by id."""
     if type(volumes) is not list:
         volumes = [volumes]
     volume_info_list = []
@@ -334,6 +401,10 @@ def attach_volumes(instance_id, volumes):
 
 def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name,
                      objects_created, wait_for_available=50):
+    """
+    Boot an instance from volume in the destination project of the given name
+    and flavor.
+    """
     command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s %s'\
               % (dest_project_id, bootable_volume_id, flavor, name)
     instance = parse_output(
@@ -373,6 +444,10 @@ def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name,
 
 def boot_from_image(dest_project_id, bootable_image_id, flavor, name,
                     objects_created, wait_for_available=50):
+    """
+    Boot an instance from image in the destination project of the given name
+    and flavor.
+    """
     command = 'nova --os-project-id %s boot --image %s --flavor %s %s' % \
               (dest_project_id, bootable_image_id, flavor, name)
     instance = parse_output(Popen(command.split(), stdout=PIPE
@@ -411,6 +486,7 @@ def boot_from_image(dest_project_id, bootable_image_id, flavor, name,
 
 
 def delete_instances(instances, wait_for_available=20):
+    """Delete the instances in the list."""
     if type(instances) is not list:
         instances = [instances]
     for instance in instances:
@@ -440,6 +516,7 @@ def delete_instances(instances, wait_for_available=20):
 
 
 def delete_volumes(volumes):
+    """Delete the volumes in the list."""
     if type(volumes) is not list:
         volumes = [volumes]
     for volume in volumes:
@@ -449,6 +526,9 @@ def delete_volumes(volumes):
 
 def take_snapshot(instance_id, objects_created, instance_name=None,
                   public=False, wait_for_available=120):
+    """
+    Take snapshot of the given instance and set it to public if specified.
+    """
     if not instance_name:
         instance_name = instance_id
     command = 'nova image-create --show %s temp-snap-%s' % (instance_id,
@@ -533,6 +613,14 @@ def main(argv):
     dest_project_name = args.dest_project_name
     if args.move:
         move = True
+        print "Are you sure you want to MOVE the instance? The source " + \
+            "instance will be deleted."
+        captcha = uuidutils.generate_uuid()[:6]
+        text = raw_input("Please type '%s' (without quotes) and" % captcha +
+                         " press enter to confirm: ")
+        if text != captcha:
+            print "Incorrect input!"
+            sys.exit(-1)
     else:
         move = False
 
@@ -581,14 +669,16 @@ def main(argv):
                                                         source_instance,
                                                         objects_created)
             objects_created.append({'volume_snapshot': snapshot_info_list})
-            print "Deleting source instance (also freeing up attached volumes)..."
+            print "Deleting source instance (also freeing up attached " + \
+                "volumes)..."
             delete_instances(source_instance)
             print "Creating volume from snapshot..."
             volume_from_snapshot = create_volume_from_snapshot(
                 snapshot_info_list, objects_created)
             objects_created.append({'volume': volume_from_snapshot})
             attached_volumes_list.remove(root_volume)
-            volume_from_snapshot_list = attached_volumes_list + volume_from_snapshot
+            volume_from_snapshot_list = attached_volumes_list + \
+                                        volume_from_snapshot
         # Create transfer requests
         print "Initializing transfer requests..."
         transfer_request_list = create_volume_transfer_request(
@@ -640,7 +730,8 @@ def main(argv):
                 snapshot_info_list, objects_created)
             objects_created.append({'volume': volume_from_snapshot_list})
         else:
-            print "Deleting source instance (and freeing up attached volumes)..."
+            print "Deleting source instance (and freeing up attached " + \
+                "volumes)..."
             delete_instances(source_instance)
             volume_from_snapshot_list = attached_volumes_list
         # Create transfer requests
