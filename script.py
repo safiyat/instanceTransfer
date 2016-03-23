@@ -512,14 +512,15 @@ def delete_snapshot(snapshots):
 def main(argv):
 
     parser = argparse.ArgumentParser(description='Transfer VMs on OpenStack' +
-                                     'from one project to another.')
+                                     ' from one project to another.')
 
     parser.add_argument('--source-instance', type=str, required=True,
                         help='UUID of the instance to be transferred.',
-                        metavar='0a1b2c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d',
+                        metavar='instance_uuid',
                         dest='source_instance_uuid')
     parser.add_argument('--dest-instance', type=str, required=False,
-                        help='Name of the instance to be transferred to.',
+                        help='Name of the destination instance after ' +
+                        'transfer (default: source instance name).',
                         metavar='instance_name', dest='dest_instance_name')
     parser.add_argument('--dest-project', type=str, required=True,
                         help='Name of the project to which the destination' +
@@ -610,13 +611,15 @@ def main(argv):
         objects_created.append({'volume': volume_from_snapshot_list})
 
     if move and eternal:
+        # The root volume gets deleted after an instance is deleted.
+        # Hence a backup of the root is needed before deletion.
         print "Creating root volume snapshot..."
         root_volume = bootable_volume(attached_volumes_list)
         snapshot_info_list = create_volume_snapshot(root_volume,
                                                     source_instance,
                                                     objects_created)
         objects_created.append({'volume_snapshot': snapshot_info_list})
-        print "Deleting source instance (also freeing up attached " + \
+        print "Deleting source instance (also detaching attached " + \
             "volumes)..."
         delete_instances(source_instance)
         print "Creating volume from snapshot..."
@@ -629,7 +632,7 @@ def main(argv):
             volume_from_snapshot
 
     if move and ephemeral:
-        print "Deleting source instance (and freeing up attached " + \
+        print "Deleting source instance (and detaching attached " + \
             "volumes)..."
         delete_instances(source_instance)
         volume_from_snapshot_list = attached_volumes_list
