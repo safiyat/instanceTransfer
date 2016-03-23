@@ -111,6 +111,11 @@ def check_environment():
     Check if the openstack clients are installed and available to call the
     necessary commands.
     """
+    if 'OS_USERNAME' not in os.environ:
+        print "Error gathering facts! Please ensure that the openstack" +\
+            " credentials of an admin user are set as environment" + \
+            " variables."
+        sys.exit(-1)
     if not find_executable('nova'):
         return False
     if not find_executable('openstack'):
@@ -567,7 +572,18 @@ def main(argv):
     if args.dest_instance_name:
         dest_instance_name = args.dest_instance_name
     else:
-        dest_instance_name = source_instance['name']
+        try:
+            dest_instance_name = source_instance['name']
+        except:
+            if 'OS_USERNAME' in os.environ:
+                print "Error gathering facts! Please ensure that the user" +\
+                    " %s has admin privileges and the source instance exists." \
+                    % os.environ['OS_USERNAME']
+            else:
+                print "Error gathering facts! Please ensure that the openstack" +\
+                    " credentials of an admin user are set as environment" + \
+                    " variables."
+            sys.exit(-1)
     source_project = get_project(source_instance['tenant_id'])
     dest_project = get_project(dest_project_name)
 
@@ -585,10 +601,6 @@ def main(argv):
 
     if booted_from_volume(attached_volumes_list):
         ephemeral = False
-        eternal = True
-    else:
-        ephemeral = True
-        eternal = False
 
     if ephemeral:
         print "Creating instance snapshot..."
@@ -610,7 +622,7 @@ def main(argv):
             snapshot_info_list, objects_created)
         objects_created.append({'volume': volume_from_snapshot_list})
 
-    if move and eternal:
+    if move and not ephemeral:
         # The root volume gets deleted after an instance is deleted.
         # Hence a backup of the root is needed before deletion.
         print "Creating root volume snapshot..."
@@ -648,7 +660,7 @@ def main(argv):
     a = accept_volume_transfer_request(transfer_request_list,
                                        dest_project['id'])
 
-    if eternal:
+    if not ephemeral:
         # Boot from volume
         print "Booting from volume..."
         dest_instance = boot_from_volume(dest_project['id'],
@@ -672,12 +684,12 @@ def main(argv):
 
     attach_volumes(dest_instance['id'], volume_from_snapshot_list)
 
-    if eternal or (ephemeral and not move):
+    if not ephemeral or (ephemeral and not move):
         # Delete volume snapshots
         print "Cleaning up snapshots..."
         delete_volume_snapshot(snapshot_info_list)
 
-    if eternal and move:
+    if not ephemeral and move:
         print "Deleting root volume..."
         delete_volumes(root_volume)
 
