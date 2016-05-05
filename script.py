@@ -298,7 +298,7 @@ def create_volume_from_snapshot(snapshots, objects_created,
     v = []
     for snapshot in snapshots:
         command = 'cinder create --snapshot-id %s --name %s' % \
-                  (snapshot['id'], snapshot['name'])
+                  (snapshot['id'], snapshot['display_name'])
         volume_from_snapshot = parse_output(Popen(
             command.split(), stdout=PIPE, stderr=PIPE).communicate()[0])
         volume_from_snapshot['device'] = snapshot['device']
