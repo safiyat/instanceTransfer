@@ -53,6 +53,10 @@ from subprocess import Popen, PIPE
 from distutils.spawn import find_executable
 
 
+STDOUT = PIPE
+STDERR = PIPE
+
+
 def parse_list_output(output):
     """Parse the output of list commands (like `openstack project list`)."""
     lines = output.splitlines()
@@ -130,27 +134,27 @@ def check_environment():
 def get_instance(instance):
     """Return the instance details from uuid or name."""
     command = 'nova show %s' % instance
-    return parse_output(Popen(command.split(), stdout=PIPE,
-                              stderr=PIPE).communicate()[0])
+    return parse_output(Popen(command.split(), stdout=STDOUT,
+                              stderr=STDERR).communicate()[0])
 
 
 def get_project_list():
     """Return list of all the projects in OpenStack."""
     return parse_list_output(Popen(
-        'openstack project list'.split(), stdout=PIPE, stderr=PIPE
+        'openstack project list'.split(), stdout=STDOUT, stderr=STDERR
     ).communicate()[0])
 
 
 def get_instance_list():
     """Return list of all the instances in OpenStack."""
     return parse_list_output(Popen('nova list --all-tenants'.split(),
-                                   stdout=PIPE, stderr=PIPE).communicate()[0])
+                                   stdout=STDOUT, stderr=STDERR).communicate()[0])
 
 
 def get_volume_list():
     """Return list of all the volumes in OpenStack."""
     return parse_list_output(Popen('cinder list --all-tenants'.split(),
-                                   stdout=PIPE, stderr=PIPE).communicate()[0])
+                                   stdout=STDOUT, stderr=STDERR).communicate()[0])
 
 
 def get_project(project):
@@ -159,8 +163,8 @@ def get_project(project):
     """
     command = 'openstack project show %s' % project
     try:
-        project_info = parse_output(Popen(command.split(), stdout=PIPE,
-                                          stderr=PIPE).communicate()[0])
+        project_info = parse_output(Popen(command.split(), stdout=STDOUT,
+                                          stderr=STDERR).communicate()[0])
     except:
         print "Project '%s' not found." % project
         sys.exit(-1)
@@ -207,8 +211,8 @@ def get_volume_info(volumes):
     volume_info_list = []
     for volume in volumes:
         command = 'cinder show %s' % volume['id']
-        volume_info = parse_output(Popen(command.split(), stdout=PIPE,
-                                         stderr=PIPE).communicate()[0])
+        volume_info = parse_output(Popen(command.split(), stdout=STDOUT,
+                                         stderr=STDERR).communicate()[0])
         att = volume_info['attachments'].replace("'", "\"").replace(
             "u\"", "\"").replace(" None,", " \"None\",")
         volume_info['device'] = json.loads(att)[0]['device']
@@ -225,8 +229,7 @@ def create_volume_snapshot(volumes, source_instance, objects_created,
     for volume in volumes:
         command = 'cinder snapshot-create --force True --name %s %s' % \
                   (volume['name'], volume['id'])
-        snapshot_info = parse_output(Popen(command.split(), stdout=PIPE,
-                                           stderr=PIPE).communicate()[0])
+        snapshot_info = parse_output(Popen(command.split(), stdout=STDOUT).communicate()[0])
         if volume['bootable'] == 'true':
             snapshot_info['bootable'] = True
         else:
@@ -245,18 +248,18 @@ def create_volume_snapshot(volumes, source_instance, objects_created,
             again = False
             for snapshot in s:
                 command = 'cinder snapshot-show %s' % snapshot['id']
-                status = parse_output(Popen(command.split(), stdout=PIPE,
-                                            stderr=PIPE).communicate()[0]
+                status = parse_output(Popen(command.split(), stdout=STDOUT,
+                                            stderr=STDERR).communicate()[0]
                                       )['status']
                 if status == 'error':
                     # clean up and take snapshot again
                     command = 'cinder snapshot-delete %s' % snapshot['id']
-                    a = Popen(command.split(), stdout=PIPE,
-                              stderr=PIPE).communicate()[0]
+                    a = Popen(command.split(), stdout=STDOUT,
+                              stderr=STDERR).communicate()[0]
                     command = 'cinder snapshot-create --force True %s' % \
                               snapshot['volume_id']
                     snapshot_info = parse_output(Popen(command.split(),
-                                                       stdout=PIPE, stderr=PIPE
+                                                       stdout=STDOUT, stderr=STDERR
                                                        ).communicate()[0])
                     snapshot_info['bootable'] = snapshot['bootable']
                     snapshot_info['device'] = snapshot['device']
@@ -287,7 +290,7 @@ def delete_volume_snapshot(volume_snapshots):
         volumes = [volume_snapshots]
     command = 'cinder snapshot-delete %s' % \
               " ".join(snapshot['id'] for snapshot in volume_snapshots)
-    d = Popen(command.split(), stdout=PIPE, stderr=PIPE).communicate()[0]
+    d = Popen(command.split(), stdout=STDOUT, stderr=STDERR).communicate()[0]
 
 
 def create_volume_from_snapshot(snapshots, objects_created,
@@ -300,7 +303,7 @@ def create_volume_from_snapshot(snapshots, objects_created,
         command = 'cinder create --snapshot-id %s --name %s' % \
                   (snapshot['id'], snapshot['display_name'])
         volume_from_snapshot = parse_output(Popen(
-            command.split(), stdout=PIPE, stderr=PIPE).communicate()[0])
+            command.split(), stdout=STDOUT, stderr=STDERR).communicate()[0])
         volume_from_snapshot['device'] = snapshot['device']
         volume_from_snapshot['bootable'] = snapshot['bootable']
         v.append(volume_from_snapshot)
@@ -313,19 +316,19 @@ def create_volume_from_snapshot(snapshots, objects_created,
             again = False
             for volume in v:
                 command = 'cinder show %s' % volume['id']
-                status = parse_output(Popen(command.split(), stdout=PIPE,
-                                            stderr=PIPE).communicate()[0]
+                status = parse_output(Popen(command.split(), stdout=STDOUT,
+                                            stderr=STDERR).communicate()[0]
                                       )['status']
                 if status == 'error':
                     # clean up and create volume again
                     command = 'cinder delete %s' % volume['id']
-                    a = Popen(command.split(), stdout=PIPE,
-                              stderr=PIPE).communicate()[0]
+                    a = Popen(command.split(), stdout=STDOUT,
+                              stderr=STDERR).communicate()[0]
                     command = 'cinder create --snapshot-id %s' % \
                               volume['snapshot_id']
                     volume_info = parse_output(Popen(
-                        command.split(), stdout=PIPE,
-                        stderr=PIPE).communicate()[0])
+                        command.split(), stdout=STDOUT,
+                        stderr=STDERR).communicate()[0])
                     volume_info['bootable'] = volume['bootable']
                     volume_info['device'] = volume['device']
                     volume = volume_info
@@ -356,8 +359,8 @@ def create_volume_transfer_request(volumes):
     t = []
     for volume in volumes:
         command = 'cinder transfer-create %s' % volume['id']
-        transfer_request = parse_output(Popen(command.split(), stdout=PIPE,
-                                              stderr=PIPE).communicate()[0])
+        transfer_request = parse_output(Popen(command.split(), stdout=STDOUT,
+                                              stderr=STDERR).communicate()[0])
         t.append(transfer_request)
     return t
 
@@ -370,8 +373,8 @@ def accept_volume_transfer_request(transfer_requests, recipient_project_id):
     for request in transfer_requests:
         command = 'cinder --os-project-id %s transfer-accept %s %s' % \
                   (recipient_project_id, request['id'], request['auth_key'])
-        transfer_accept = parse_output(Popen(command.split(), stdout=PIPE,
-                                             stderr=PIPE).communicate()[0])
+        transfer_accept = parse_output(Popen(command.split(), stdout=STDOUT,
+                                             stderr=STDERR).communicate()[0])
         t.append(transfer_accept)
     return t
 
@@ -383,8 +386,8 @@ def attach_volumes(instance_id, volumes):
     for volume in volumes:
         command = 'nova volume-attach %s %s %s' % (instance_id, volume['id'],
                                                    volume['device'])
-        dest_attachment = parse_output(Popen(command.split(), stdout=PIPE,
-                                             stderr=PIPE).communicate()[0])
+        dest_attachment = parse_output(Popen(command.split(), stdout=STDOUT,
+                                             stderr=STDERR).communicate()[0])
 
 
 def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name,
@@ -395,8 +398,8 @@ def boot_from_volume(dest_project_id, bootable_volume_id, flavor, name,
     """
     command = 'nova --os-project-id %s boot --boot-volume %s --flavor %s' \
               ' --poll %s' % (dest_project_id, bootable_volume_id, flavor, name)
-    output = Popen(command.split(), stdout=PIPE,
-                   stderr=PIPE).communicate()[0].split('\n\n')[0]
+    output = Popen(command.split(), stdout=STDOUT,
+                   stderr=STDERR).communicate()[0].split('\n\n')[0]
     return parse_output(output)
 
 
@@ -408,8 +411,8 @@ def boot_from_image(dest_project_id, bootable_image_id, flavor, name,
     """
     command = 'nova --os-project-id %s boot --image %s --flavor %s' \
               ' --poll %s' % (dest_project_id, bootable_image_id, flavor, name)
-    output = Popen(command.split(), stdout=PIPE,
-                   stderr=PIPE).communicate()[0].split('\n\n')[0]
+    output = Popen(command.split(), stdout=STDOUT,
+                   stderr=STDERR).communicate()[0].split('\n\n')[0]
     return parse_output(output)
 
 
@@ -419,7 +422,7 @@ def delete_instances(instances, wait_for_available=20):
         instances = [instances]
     for instance in instances:
         command = 'nova delete %s' % instance['id']
-        a = Popen(command.split(), stdout=PIPE, stderr=PIPE).communicate()[0]
+        a = Popen(command.split(), stdout=STDOUT, stderr=STDERR).communicate()[0]
     if wait_for_available > 0:
         wait = 0
         again = False
@@ -429,8 +432,8 @@ def delete_instances(instances, wait_for_available=20):
             again = False
             for instance in instances:
                 command = 'nova show %s' % instance['id']
-                show = parse_output(Popen(command.split(), stdout=PIPE,
-                                          stderr=PIPE).communicate()[0])
+                show = parse_output(Popen(command.split(), stdout=STDOUT,
+                                          stderr=STDERR).communicate()[0])
                 if 'status' in show:
                     again = True
                     break
@@ -449,7 +452,7 @@ def delete_volumes(volumes):
         volumes = [volumes]
     for volume in volumes:
         command = 'cinder delete %s' % volume['id']
-        a = Popen(command.split(), stdout=PIPE, stderr=PIPE).communicate()[0]
+        a = Popen(command.split(), stdout=STDOUT, stderr=STDERR).communicate()[0]
 
 
 def take_snapshot(instance_id, objects_created, instance_name=None,
@@ -461,7 +464,7 @@ def take_snapshot(instance_id, objects_created, instance_name=None,
         instance_name = instance_id
     command = 'nova image-create --show %s temp-snap-%s' % (instance_id,
                                                             instance_name)
-    snapshot = parse_output(Popen(command.split(), stdout=PIPE, stderr=PIPE
+    snapshot = parse_output(Popen(command.split(), stdout=STDOUT, stderr=STDERR
                                   ).communicate()[0])
     if wait_for_available > 0:
         wait = 0
@@ -471,18 +474,18 @@ def take_snapshot(instance_id, objects_created, instance_name=None,
             wait += 5
             again = False
             command = 'glance image-show %s' % snapshot['id']
-            status = parse_output(Popen(command.split(), stdout=PIPE,
-                                        stderr=PIPE).communicate()[0]
+            status = parse_output(Popen(command.split(), stdout=STDOUT,
+                                        stderr=STDERR).communicate()[0]
                                   )['status']
             if status == 'error':
                 # clean up and create snapshot again
                 command = 'glance image-delete %s' % snapshot['id']
-                a = Popen(command.split(), stdout=PIPE,
-                          stderr=PIPE).communicate()[0]
+                a = Popen(command.split(), stdout=STDOUT,
+                          stderr=STDERR).communicate()[0]
                 command = 'nova image-create --show %s temp-snap-%s' % \
                           (instance_id, instance_name)
-                snapshot = parse_output(Popen(command.split(), stdout=PIPE,
-                                              stderr=PIPE).communicate()[0])
+                snapshot = parse_output(Popen(command.split(), stdout=STDOUT,
+                                              stderr=STDERR).communicate()[0])
                 again = True
             elif status == 'queued' or status == 'saving':
                 again = True
@@ -500,7 +503,7 @@ def take_snapshot(instance_id, objects_created, instance_name=None,
         command = 'glance image-update --visibility private %s' % \
                   snapshot['id']
     snapshot = parse_output(Popen(
-        command.split(), stdout=PIPE, stderr=PIPE).communicate()[0])
+        command.split(), stdout=STDOUT, stderr=STDERR).communicate()[0])
     return snapshot
 
 
@@ -511,7 +514,7 @@ def delete_snapshot(snapshots):
     command = 'nova image-delete %s' % \
               " ".join(snapshot['id'] for snapshot in snapshots)
     snapshot = parse_output(Popen(
-        command.split(), stdout=PIPE, stderr=PIPE).communicate()[0])
+        command.split(), stdout=STDOUT, stderr=STDERR).communicate()[0])
 
 
 def main(argv):
